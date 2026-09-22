@@ -110,3 +110,10 @@ set-face global StatusCursor        "black,rgb:%opt{teal_40},default"
 set-face global Prompt              "rgb:%opt{indigo_40},default,default"
 set-face global BufferPadding       "rgb:%opt{blue_50},default,default"
 
+# Kakoune c-family
+set-face global meta                "rgb:%opt{purple_80}"
+set-face global attribute           "rgb:%opt{purple_70}"
+
+set-face global value               "rgb:%opt{grey_50}"
+set-face global module              "rgb:%opt{grey_40}"
+set-face global builtin             "rgb:%opt{grey_30}"

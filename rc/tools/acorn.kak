@@ -295,19 +295,10 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
         keval_async( 'echo -debug Failed to create FIFO: {}'.format( e ), client=client )
     else:
         def read_fifo( filename, bufname ):
-            import time
             global acorn_state
 
-            fifo = open( filename, 'r' )
-            os.set_blocking( fifo.fileno(), False )
-            acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] = ''
-            while True:
-                buffer = fifo.read()
-                if not buffer:
-                    break
-                acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] += buffer
-                time.sleep( 1 )
-            fifo.close()
+            with open( filename, 'r' ) as fifo:
+                acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] = fifo.read()
 
         reader = threading.Thread( target=read_fifo, args=( filename, bufname ) )
         reader.start()
@@ -352,9 +343,8 @@ def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifica
             cmds = []
             for nodetype, captures in captures_by_type_items:
                 nodetype = nodetype.replace( '.', '_' )
-                ranges=''
-                for captured in captures:
-                    ranges += '{}.{},{}.{}|{} '.format(
+                ranges = ''.join(
+                    '{}.{},{}.{}|{} '.format(
                         # TODO take a deeper look at the 0-based coordinates
                         # This will be X.0 - X.0 for a single char on the margin
                         # But X.0 - X.3 for a longer string
@@ -363,6 +353,7 @@ def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifica
                         , captured.end_point[0] + 1
                         , max( captured.end_point[1], 1 )
                         , nodetype )
+                    for captured in captures )
 
                 #print( 'high - {} {}'.format( nodetype, ranges ) )
                 cmds.append( 'try %[ declare-option range-specs {}_range ]'.format( nodetype ) )
@@ -405,7 +396,7 @@ def acorn_spell( client, filetype, bufname, history_id, uncommitted_modification
 
         cmds = []
         words_set = set( words.words() )
-        ranges=''
+        range_parts = []
         for cap in captures[ 'comment' ]:
             comment = acorn_state[ 'bufname' ][ bufname ][ 'buffer' ][ cap.start_byte : cap.end_byte ].decode()
             chopped = [
@@ -420,12 +411,13 @@ def acorn_spell( client, filetype, bufname, history_id, uncommitted_modification
                     start_col += cap.start_point[1] if line == 0 else 0
                     end_col = word[ 2 ] - comment.rfind( '\n', 0, word[ 2 ] )
                     end_col += cap.start_point[1] if line == 0 else 0
-                    ranges = ranges + '{}.{},{}.{}|{} '.format(
+                    range_parts.append( '{}.{},{}.{}|{} '.format(
                           cap.start_point[0] + 1 + line
                         ,                      start_col
                         , cap.start_point[0] + 1 + line
                         ,                      end_col
-                        , 'typo' )
+                        , 'typo' ) )
+        ranges = ''.join( range_parts )
 
         cmds.append( 'try %[ declare-option range-specs {}_range ]'.format( 'typo' ) )
         cmds.append( 'try %[ add-highlighter window/acorn group ]' )
@@ -492,16 +484,17 @@ def acorn_format( client, filetype, bufname, history_id, uncommitted_modificatio
             cursor = acorn_state[ 'bufname' ][ bufname ][ 'tree' ].walk()
             visited_children = False
             cmds = []
-            ranges=''
+            range_parts = []
             while True:
                 if not visited_children:
-                    ranges += formatter( cursor, bufname )
+                    range_parts.append( formatter( cursor, bufname ) )
                     if not cursor.goto_first_child():
                         visited_children = True
                 elif cursor.goto_next_sibling():
                     visited_children = False
                 elif not cursor.goto_parent():
                     break
+            ranges = ''.join( range_parts )
 
             cmds.append( 'try %[ declare-option range-specs {}_range ]'.format( 'format' ) )
             cmds.append( 'try %[ add-highlighter window/acorn group ]' )
