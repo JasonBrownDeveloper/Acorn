@@ -1,6 +1,7 @@
 provide-module acorn %{
 
 declare-option str AcornBegin
+declare-option -hidden int acorn_history_cache_id 999999999
 
 python %{
 global acorn_server
@@ -101,17 +102,15 @@ def acorn_init_buffer( client, filetype, bufname ):
     # Initialize filetype if not already
     # Initialize filetype parser if not already
     # but only if there is a module for filetype defined
-    if ( ( 'parser' not in acorn_state[ 'filetype' ].setdefault( filetype, {} ) )
-    and ( 'module' in acorn_state[ 'filetype' ][ filetype ] ) ):
+    filetype_cache = acorn_state[ 'filetype' ].setdefault( filetype, {} )
+    if ( ( 'parser' not in filetype_cache )
+    and ( 'module' in filetype_cache ) ):
         from tree_sitter import Language, Parser
         import importlib
 
-        acorn_state[ 'filetype' ][ filetype ][ 'grammar' ] = \
-            importlib.import_module( acorn_state[ 'filetype' ][ filetype ][ 'module' ] )
-        acorn_state[ 'filetype' ][ filetype ][ 'language' ] = \
-            Language( acorn_state[ 'filetype' ][ filetype ][ 'grammar' ].language() )
-        acorn_state[ 'filetype' ][ filetype ][ 'parser' ] = \
-            Parser( acorn_state[ 'filetype' ][ filetype ][ 'language' ] )
+        filetype_cache[ 'grammar' ] = importlib.import_module( filetype_cache[ 'module' ] )
+        filetype_cache[ 'language' ] = Language( filetype_cache[ 'grammar' ].language() )
+        filetype_cache[ 'parser' ] = Parser( filetype_cache[ 'language' ] )
 
     keval_async( 'try %[ remove-highlighter window/{} ]'.format( filetype ), client=client )
     keval_async( 'try %[ remove-hooks window c-.+ ]', client=client )
@@ -126,7 +125,10 @@ global acorn_update_tree
 def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitted_modifications ):
     global acorn_state
 
-    if ( acorn_state[ 'bufname' ][ bufname ].get( 'tree_history_id', None ) == history_id
+    bufname_cache = acorn_state[ 'bufname' ][ bufname ]
+    filetype_cache = acorn_state[ 'filetype' ][ filetype ]
+
+    if ( bufname_cache.get( 'tree_history_id', None ) == history_id
     and not uncommitted_modifications ):
         return
 
@@ -136,24 +138,24 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
     # or we have uncommitted modifications
     # then we should be able to generate a tree.edit()
     modification = None
-    if ( ( 'tree_history_id' in acorn_state[ 'bufname' ][ bufname ]
-    and acorn_state[ 'bufname' ][ bufname ][ 'tree_history_id' ] != history_id )
+    if ( ( 'tree_history_id' in bufname_cache
+    and bufname_cache[ 'tree_history_id' ] != history_id )
     or uncommitted_modifications ):
         import re
         global acorn_pattern
 
-        history_parsed = acorn_state[ 'bufname' ][ bufname ].setdefault( 'history_parsed', [] )
+        history_parsed = bufname_cache.setdefault( 'history_parsed', [] )
         last_pos = 0
         if history_parsed:
             last_pos = history_parsed[-1][ 'pos' ]
             history_parsed.pop()
 
         match = acorn_pattern[ 'history' ].finditer( history, last_pos )
-        acorn_state[ 'bufname' ][ bufname ][ 'history' ] = history
+        bufname_cache[ 'history' ] = history
 
         history_parsed.extend( [ m.groupdict() | { 'pos':m.start() } for m in match ] )
 
-        history_id_old = acorn_state[ 'bufname' ][ bufname ][ 'tree_history_id' ]
+        history_id_old = bufname_cache[ 'tree_history_id' ]
 
         # case 1 new entry, or moved down history
         if str( history_id ) == history_parsed[ history_id_old ][ 'child' ]:
@@ -161,10 +163,10 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
             # case 1.a new entry already covered by a now complete um
             # some auto formatting will not be in our stored UM
-            if ( acorn_state[ 'bufname' ][ bufname ].get( 'uncommitted_modifications', '' )
-            and history_parsed[ history_id ][ 'modifications' ][1:].startswith( acorn_state[ 'bufname' ][ bufname ][ 'uncommitted_modifications' ] ) ):
-                #print( '1.a - x{}x y{}y'.format( history_parsed[ history_id ][ 'modifications' ][1:], acorn_state[ 'bufname' ][ bufname ].get( 'uncommitted_modifications', '' ) ) )
-                new_um = history_parsed[ history_id ][ 'modifications' ][ len( acorn_state[ 'bufname' ][ bufname ].setdefault( 'uncommitted_modifications', '' ) ) : ]
+            if ( bufname_cache.get( 'uncommitted_modifications', '' )
+            and history_parsed[ history_id ][ 'modifications' ][1:].startswith( bufname_cache[ 'uncommitted_modifications' ] ) ):
+                #print( '1.a - x{}x y{}y'.format( history_parsed[ history_id ][ 'modifications' ][1:], bufname_cache.get( 'uncommitted_modifications', '' ) ) )
+                new_um = history_parsed[ history_id ][ 'modifications' ][ len( bufname_cache.setdefault( 'uncommitted_modifications', '' ) ) : ]
                 reverse = False
                 modification = acorn_pattern[ 'modifications' ].findall( new_um )
 
@@ -187,19 +189,19 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
         if uncommitted_modifications:
             #print( '3 - a{}a'.format( uncommitted_modifications ) )
             # The raw list[str] causes kakoune's eval to throw a parse error: unterminated string '...'
-            new_um = uncommitted_modifications[ len( acorn_state[ 'bufname' ][ bufname ].setdefault( 'uncommitted_modifications', '' ) ) : ]
+            new_um = uncommitted_modifications[ len( bufname_cache.setdefault( 'uncommitted_modifications', '' ) ) : ]
             reverse = False
             modification = acorn_pattern[ 'modifications' ].findall( new_um )
-            acorn_state[ 'bufname' ][ bufname ][ 'uncommitted_modifications' ] = uncommitted_modifications
+            bufname_cache[ 'uncommitted_modifications' ] = uncommitted_modifications
         else:
             #print( 'not 3' )
-            acorn_state[ 'bufname' ][ bufname ][ 'uncommitted_modifications' ] = ''
+            bufname_cache[ 'uncommitted_modifications' ] = ''
 
         if modification is not None:
             if reverse: modification.reverse()
 
             for m in modification:
-                buffer = acorn_state[ 'bufname' ][ bufname ][ 'buffer' ]
+                buffer = bufname_cache[ 'buffer' ]
                 match = acorn_pattern[ 'group' ].match( m )
                 if not match:
                     continue
@@ -229,7 +231,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                     old_end_column = old_end_byte - buffer.rfind( '\n', 0, old_end_byte )
 
                     buffer = buffer[ : start_byte ] + buffer[ old_end_byte : ]
-                    acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] = buffer
+                    bufname_cache[ 'buffer' ] = buffer
 
                     new_end_byte = start_byte
 
@@ -243,7 +245,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                     old_end_column = int( match.group( 'column' ) )
 
                     buffer = buffer[ : start_byte ] + match.group( 'text' ) + buffer[ old_end_byte : ]
-                    acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] = buffer
+                    bufname_cache[ 'buffer' ] = buffer
 
                     new_end_byte = start_byte + len( match.group( 'text' ) )
 
@@ -261,7 +263,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                 #    , ( int( match.group( 'line' ) ), int( match.group( 'column' ) ) )
                 #    , ( old_end_line, old_end_column )
                 #    , ( new_end_line, new_end_column ) ) )
-                acorn_state[ 'bufname' ][ bufname ][ 'tree' ].edit(
+                bufname_cache[ 'tree' ].edit(
                       start_byte=start_byte
                     , old_end_byte=old_end_byte
                     , new_end_byte=new_end_byte
@@ -269,13 +271,13 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                     , old_end_point=( old_end_line, old_end_column )
                     , new_end_point=( new_end_line, new_end_column ) )
 
-                acorn_state[ 'bufname' ][ bufname ][ 'tree' ] = \
-                    acorn_state[ 'filetype' ][ filetype ][ 'parser' ].parse(
-                          acorn_state[ 'bufname' ][ bufname ][ 'buffer' ].encode()
-                        , acorn_state[ 'bufname' ][ bufname ][ 'tree' ] )
+                bufname_cache[ 'tree' ] = \
+                    filetype_cache[ 'parser' ].parse(
+                          bufname_cache[ 'buffer' ].encode()
+                        , bufname_cache[ 'tree' ] )
 
             # In case 1.a we want to update the history id
-            acorn_state[ 'bufname' ][ bufname ][ 'tree_history_id' ] = history_id
+            bufname_cache[ 'tree_history_id' ] = history_id
 
             return
         else:
@@ -294,13 +296,11 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
     except OSError as e:
         keval_async( 'echo -debug Failed to create FIFO: {}'.format( e ), client=client )
     else:
-        def read_fifo( filename, bufname ):
-            global acorn_state
-
+        def read_fifo( filename, bufname_cache ):
             with open( filename, 'r' ) as fifo:
-                acorn_state[ 'bufname' ][ bufname ][ 'buffer' ] = fifo.read()
+                bufname_cache[ 'buffer' ] = fifo.read()
 
-        reader = threading.Thread( target=read_fifo, args=( filename, bufname ) )
+        reader = threading.Thread( target=read_fifo, args=( filename, bufname_cache ) )
         reader.start()
 
         keval_async( 'write {}'.format( filename ), client=client )
@@ -310,16 +310,17 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
     os.rmdir( tmpdir )
 
-    acorn_state[ 'bufname' ][ bufname ][ 'tree' ] = \
-        acorn_state[ 'filetype' ][ filetype ][ 'parser' ].parse(
-            acorn_state[ 'bufname' ][ bufname ][ 'buffer' ].encode() )
-    acorn_state[ 'bufname' ][ bufname ][ 'tree_history_id' ] = history_id
+    bufname_cache[ 'tree' ] = \
+        filetype_cache[ 'parser' ].parse( bufname_cache[ 'buffer' ].encode() )
+    bufname_cache[ 'tree_history_id' ] = history_id
 
 global acorn_highlight
 def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count ):
     global acorn_state
 
-    client_state = acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} ).setdefault( client, {} )
+    bufname_cache = acorn_state[ 'bufname' ][ bufname ]
+    filetype_cache = acorn_state[ 'filetype' ][ filetype ]
+    client_state = bufname_cache.setdefault( 'client', {} ).setdefault( client, {} )
 
     margin = max( view_line_count, 50 )
     view_start_line = max( 0, view_first_line - margin )
@@ -334,21 +335,21 @@ def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifica
     or ( client_state[ 'highlight_history_id' ] != history_id )
     or ( uncommitted_modifications )
     or ( not range_covered ) ):
-        if 'highlights_query' in acorn_state[ 'filetype' ][ filetype ]:
-            query_string = acorn_state[ 'filetype' ][ filetype ][ 'highlights_query' ]
+        if 'highlights_query' in filetype_cache:
+            query_string = filetype_cache[ 'highlights_query' ]
         else:
             try:
-                query_string = acorn_state[ 'filetype' ][ filetype ][ 'grammar' ].HIGHLIGHTS_QUERY
+                query_string = filetype_cache[ 'grammar' ].HIGHLIGHTS_QUERY
             except:
                 query_string = None
 
         if query_string:
             from tree_sitter import Query, QueryCursor
-            query = Query( acorn_state[ 'filetype' ][ filetype ][ 'language' ], query_string )
+            query = Query( filetype_cache[ 'language' ], query_string )
             highlights = QueryCursor( query )
             highlights.set_point_range( ( view_start_line, 0 ), ( view_end_line, 0 ) )
 
-            captures_by_type = highlights.captures( acorn_state[ 'bufname' ][ bufname ][ 'tree' ].root_node )
+            captures_by_type = highlights.captures( bufname_cache[ 'tree' ].root_node )
             captures_by_type_items = captures_by_type.items()
 
             cmds = []
@@ -387,10 +388,13 @@ global acorn_spell
 def acorn_spell( client, filetype, bufname, history_id, uncommitted_modifications ):
     global acorn_state
 
-    acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} )[ client ] = {}
+    bufname_cache = acorn_state[ 'bufname' ][ bufname ]
+    filetype_cache = acorn_state[ 'filetype' ][ filetype ]
+    client_state = {}
+    bufname_cache.setdefault( 'client', {} )[ client ] = client_state
 
-    if ( ( 'spell_history_id' not in acorn_state[ 'bufname' ][ bufname ][ 'client' ][ client ] )
-    or ( acorn_state[ 'bufname' ][ bufname ][ 'client' ][ client ][ 'spell_history_id' ] != history_id )
+    if ( ( 'spell_history_id' not in client_state )
+    or ( client_state[ 'spell_history_id' ] != history_id )
     or ( uncommitted_modifications ) ):
         import re
 
@@ -402,15 +406,15 @@ def acorn_spell( client, filetype, bufname, history_id, uncommitted_modification
         (comment) @comment
         """
         from tree_sitter import Query, QueryCursor
-        query = Query( acorn_state[ 'filetype' ][ filetype ][ 'language' ], query_string )
+        query = Query( filetype_cache[ 'language' ], query_string )
         highlights = QueryCursor( query )
-        captures = highlights.captures( acorn_state[ 'bufname' ][ bufname ][ 'tree' ].root_node )
+        captures = highlights.captures( bufname_cache[ 'tree' ].root_node )
 
         cmds = []
         words_set = set( words.words() )
         range_parts = []
         for cap in captures[ 'comment' ]:
-            comment = acorn_state[ 'bufname' ][ bufname ][ 'buffer' ][ cap.start_byte : cap.end_byte ].decode()
+            comment = bufname_cache[ 'buffer' ][ cap.start_byte : cap.end_byte ].decode()
             chopped = [
                 ( m.group( 0 ), m.start(), m.end() - 1 )
                 for m in re.finditer(
@@ -443,31 +447,35 @@ def acorn_spell( client, filetype, bufname, history_id, uncommitted_modification
             , '\n'.join( cmds ) )
         keval_async( cmds )
 
-        acorn_state[ 'bufname' ][ bufname ][ 'client' ][ client ][ 'spell_history_id' ] = history_id
+        client_state[ 'spell_history_id' ] = history_id
 
 global acorn_tag
 def acorn_tag( client, filetype, bufname, history_id, uncommitted_modifications ):
     global acorn_state
 
-    if ( ( 'tag_history_id' not in acorn_state[ 'bufname' ][ bufname ] )
-    or ( acorn_state[ 'bufname' ][ bufname ][ 'tag_history_id' ] != history_id )
+    bufname_cache = acorn_state[ 'bufname' ][ bufname ]
+    filetype_cache = acorn_state[ 'filetype' ][ filetype ]
+
+    if ( ( 'tag_history_id' not in bufname_cache )
+    or ( bufname_cache[ 'tag_history_id' ] != history_id )
     or ( uncommitted_modifications ) ):
         from tree_sitter import Query, QueryCursor
-        query = Query( acorn_state[ 'filetype' ][ filetype ][ 'language' ], acorn_state[ 'filetype' ][ filetype ][ 'grammar' ].TAGS_QUERY )
+        query = Query( filetype_cache[ 'language' ], filetype_cache[ 'grammar' ].TAGS_QUERY )
         tags = QueryCursor( query )
-        captures = tags.captures( acorn_state[ 'bufname' ][ bufname ][ 'tree' ].root_node )
+        captures = tags.captures( bufname_cache[ 'tree' ].root_node )
 
-        acorn_state[ 'bufname' ][ bufname ][ 'tag' ] = { k:sorted( set( [ n.start_point[0] + 1 for n in v ] ) ) for k, v in captures.items() }
-        acorn_state[ 'bufname' ][ bufname ][ 'tag_history_id' ] = history_id
+        bufname_cache[ 'tag' ] = { k:sorted( set( [ n.start_point[0] + 1 for n in v ] ) ) for k, v in captures.items() }
+        bufname_cache[ 'tag_history_id' ] = history_id
 
 global acorn_next_tag
 def acorn_next_tag( client, bufname, cursor_line ):
     global acorn_state
     import bisect
 
-    next_biggest = bisect.bisect( acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ], cursor_line )
+    name_cache = acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ]
+    next_biggest = bisect.bisect( name_cache, cursor_line )
 
-    keval_async( 'execute-keys {}g'.format( acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ][ next_biggest % len( acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ] ) ] ), client=client )
+    keval_async( 'execute-keys {}g'.format( name_cache[ next_biggest % len( name_cache ) ] ), client=client )
 
 
 global acorn_prev_tag
@@ -475,16 +483,19 @@ def acorn_prev_tag( client, bufname, cursor_line ):
     global acorn_state
     import bisect
 
-    prev_biggest = bisect.bisect_left( acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ], cursor_line )
+    name_cache = acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ]
+    prev_biggest = bisect.bisect_left( name_cache, cursor_line )
 
-    keval_async( 'execute-keys {}g'.format( acorn_state[ 'bufname' ][ bufname ][ 'tag' ][ 'name' ][ prev_biggest - 1 ] ), client=client )
+    keval_async( 'execute-keys {}g'.format( name_cache[ prev_biggest - 1 ] ), client=client )
 
 
 global acorn_format
 def acorn_format( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count ):
     global acorn_state
 
-    client_state = acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} ).setdefault( client, {} )
+    bufname_cache = acorn_state[ 'bufname' ][ bufname ]
+    filetype_cache = acorn_state[ 'filetype' ][ filetype ]
+    client_state = bufname_cache.setdefault( 'client', {} ).setdefault( client, {} )
 
     margin = max( view_line_count, 50 )
     view_start_line = max( 0, view_first_line - margin )
@@ -501,13 +512,13 @@ def acorn_format( client, filetype, bufname, history_id, uncommitted_modificatio
     or ( client_state[ 'format_history_id' ] != history_id )
     or ( uncommitted_modifications )
     or ( not range_covered ) ):
-        if 'formatter' in acorn_state[ 'filetype' ][ filetype ]:
-            formatter = acorn_state[ 'filetype' ][ filetype ][ 'formatter' ]
+        if 'formatter' in filetype_cache:
+            formatter = filetype_cache[ 'formatter' ]
         else:
             formatter = None
 
         if formatter:
-            cursor = acorn_state[ 'bufname' ][ bufname ][ 'tree' ].walk()
+            cursor = bufname_cache[ 'tree' ].walk()
             visited_children = False
             cmds = []
             range_parts = []
@@ -557,6 +568,15 @@ def acorn_dump( client ):
           client
         , acorn_state ) )
 
+global acorn_fetch_history
+def acorn_fetch_history( history_id, uncommitted_modifications ):
+    cached_hid = opt.acorn_history_cache_id.as_int()
+    if uncommitted_modifications or history_id != cached_hid:
+        history_cache = val.history.as_str()
+        keval_async( 'set-option buffer acorn_history_cache_id {}'.format( history_id ) )
+        return history_cache
+    return ''
+
 # __main__
 import multiprocessing
 global acorn_pipe_client
@@ -595,8 +615,12 @@ define-command -override acorn_remove_buffer %{ py %{
 define-command -override acorn_highlight %{ py %{
     global acorn_pipe_client
 
+    history_id_cache = val.history_id
+    uncommitted_modifications_cache = val.uncommitted_modifications.as_str()
+    history_cache = acorn_fetch_history( history_id_cache, uncommitted_modifications_cache )
+    window_range_cache = val.window_range
     acorn_pipe_client.send( ( 'highlight', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
+    acorn_pipe_client.send( ( history_id_cache, history_cache, uncommitted_modifications_cache, window_range_cache.line, window_range_cache.height ) )
 } }
 
 define-command -override acorn_spell %{ py %{
@@ -623,15 +647,23 @@ define-command -override acorn_prev_tag %{ py %{
 define-command -override acorn_format %{ py %{
     global acorn_pipe_client
 
+    history_id_cache = val.history_id
+    uncommitted_modifications_cache = val.uncommitted_modifications.as_str()
+    history_cache = acorn_fetch_history( history_id_cache, uncommitted_modifications_cache )
+    window_range_cache = val.window_range
     acorn_pipe_client.send( ( 'format', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
+    acorn_pipe_client.send( ( history_id_cache, history_cache, uncommitted_modifications_cache, window_range_cache.line, window_range_cache.height ) )
 } }
 
 define-command -hidden -override acorn_reload %{ py %{
     global acorn_pipe_client
 
+    history_id_cache = val.history_id
+    uncommitted_modifications_cache = val.uncommitted_modifications.as_str()
+    history_cache = acorn_fetch_history( history_id_cache, uncommitted_modifications_cache )
+    window_range_cache = val.window_range
     acorn_pipe_client.send( ( 'reload', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
+    acorn_pipe_client.send( ( history_id_cache, history_cache, uncommitted_modifications_cache, window_range_cache.line, window_range_cache.height ) )
 } }
 
 define-command -hidden -override acorn_dump %{ py %{
