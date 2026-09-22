@@ -56,9 +56,9 @@ def acorn_server( pipe_server ):
             continue
 
         if action == 'highlight':
-            history_id, history, uncommitted_modifications = pipe_server.recv()
+            history_id, history, uncommitted_modifications, view_first_line, view_line_count = pipe_server.recv()
             acorn_update_tree( client, filetype, bufname, history_id, history, uncommitted_modifications )
-            acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications )
+            acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count )
 
         elif action == 'spell':
             history_id, history, uncommitted_modifications = pipe_server.recv()
@@ -78,16 +78,16 @@ def acorn_server( pipe_server ):
             acorn_prev_tag( client, bufname, cursor_line )
 
         elif action == 'format':
-            history_id, history, uncommitted_modifications = pipe_server.recv()
+            history_id, history, uncommitted_modifications, view_first_line, view_line_count = pipe_server.recv()
             acorn_update_tree( client, filetype, bufname, history_id, history, uncommitted_modifications )
-            acorn_format( client, filetype, bufname, history_id, uncommitted_modifications )
+            acorn_format( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count )
 
         elif action == 'reload':
             acorn_reload( bufname )
             acorn_init_buffer( client, filetype, bufname )
-            history_id, history, uncommitted_modifications = pipe_server.recv()
+            history_id, history, uncommitted_modifications, view_first_line, view_line_count = pipe_server.recv()
             acorn_update_tree( client, filetype, bufname, history_id, history, uncommitted_modifications )
-            acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications )
+            acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count )
 
         elif action == 'dump':
             acorn_dump( client )
@@ -316,14 +316,24 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
     acorn_state[ 'bufname' ][ bufname ][ 'tree_history_id' ] = history_id
 
 global acorn_highlight
-def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications ):
+def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count ):
     global acorn_state
 
-    acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} )[ client ] = {}
+    client_state = acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} ).setdefault( client, {} )
 
-    if ( ( 'highlight_history_id' not in acorn_state[ 'bufname' ][ bufname ][ 'client' ][ client ] )
-    or ( acorn_state[ 'bufname' ][ bufname ][ 'client' ][ client ][ 'highlight_history_id' ] != history_id )
-    or ( uncommitted_modifications ) ):
+    margin = max( view_line_count, 50 )
+    view_start_line = max( 0, view_first_line - margin )
+    view_end_line = view_first_line + view_line_count + margin
+
+    cached_range = client_state.get( 'highlight_range' )
+    range_covered = ( cached_range is not None
+        and cached_range[0] <= view_start_line
+        and cached_range[1] >= view_end_line )
+
+    if ( ( 'highlight_history_id' not in client_state )
+    or ( client_state[ 'highlight_history_id' ] != history_id )
+    or ( uncommitted_modifications )
+    or ( not range_covered ) ):
         if 'highlights_query' in acorn_state[ 'filetype' ][ filetype ]:
             query_string = acorn_state[ 'filetype' ][ filetype ][ 'highlights_query' ]
         else:
@@ -336,6 +346,7 @@ def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifica
             from tree_sitter import Query, QueryCursor
             query = Query( acorn_state[ 'filetype' ][ filetype ][ 'language' ], query_string )
             highlights = QueryCursor( query )
+            highlights.set_point_range( ( view_start_line, 0 ), ( view_end_line, 0 ) )
 
             captures_by_type = highlights.captures( acorn_state[ 'bufname' ][ bufname ][ 'tree' ].root_node )
             captures_by_type_items = captures_by_type.items()
@@ -369,7 +380,8 @@ def acorn_highlight( client, filetype, bufname, history_id, uncommitted_modifica
                 , '\n'.join( cmds ) )
             keval_async( cmds )
 
-        acorn_state[ 'bufname' ][ bufname ][ 'client' ].setdefault( client, {} )[ 'highlight_history_id' ] = history_id
+        client_state[ 'highlight_history_id' ] = history_id
+        client_state[ 'highlight_range' ] = ( view_start_line, view_end_line )
 
 global acorn_spell
 def acorn_spell( client, filetype, bufname, history_id, uncommitted_modifications ):
@@ -469,12 +481,26 @@ def acorn_prev_tag( client, bufname, cursor_line ):
 
 
 global acorn_format
-def acorn_format( client, filetype, bufname, history_id, uncommitted_modifications ):
+def acorn_format( client, filetype, bufname, history_id, uncommitted_modifications, view_first_line, view_line_count ):
     global acorn_state
 
-    if ( ( 'format_history_id' not in acorn_state[ 'bufname' ][ bufname ] )
-    or ( acorn_state[ 'bufname' ][ bufname ][ 'format_history_id' ] != history_id )
-    or ( uncommitted_modifications ) ):
+    client_state = acorn_state[ 'bufname' ][ bufname ].setdefault( 'client', {} ).setdefault( client, {} )
+
+    margin = max( view_line_count, 50 )
+    view_start_line = max( 0, view_first_line - margin )
+    view_end_line = view_first_line + view_line_count + margin
+    start_point = ( view_start_line, 0 )
+    end_point = ( view_end_line, 0 )
+
+    cached_range = client_state.get( 'format_range' )
+    range_covered = ( cached_range is not None
+        and cached_range[0] <= view_start_line
+        and cached_range[1] >= view_end_line )
+
+    if ( ( 'format_history_id' not in client_state )
+    or ( client_state[ 'format_history_id' ] != history_id )
+    or ( uncommitted_modifications )
+    or ( not range_covered ) ):
         if 'formatter' in acorn_state[ 'filetype' ][ filetype ]:
             formatter = acorn_state[ 'filetype' ][ filetype ][ 'formatter' ]
         else:
@@ -487,8 +513,14 @@ def acorn_format( client, filetype, bufname, history_id, uncommitted_modificatio
             range_parts = []
             while True:
                 if not visited_children:
-                    range_parts.append( formatter( cursor, bufname ) )
-                    if not cursor.goto_first_child():
+                    node_start = cursor.node.start_point
+                    node_end = cursor.node.end_point
+                    intersects = node_start <= end_point and node_end >= start_point
+                    if intersects:
+                        range_parts.append( formatter( cursor, bufname ) )
+                    if intersects and cursor.goto_first_child():
+                        visited_children = False
+                    else:
                         visited_children = True
                 elif cursor.goto_next_sibling():
                     visited_children = False
@@ -508,7 +540,8 @@ def acorn_format( client, filetype, bufname, history_id, uncommitted_modificatio
                 , '\n'.join( cmds ) )
             keval_async( cmds )
 
-        acorn_state[ 'bufname' ][ bufname ][ 'format_history_id' ] = history_id
+        client_state[ 'format_history_id' ] = history_id
+        client_state[ 'format_range' ] = ( view_start_line, view_end_line )
 
 global acorn_reload
 def acorn_reload( bufname ):
@@ -563,7 +596,7 @@ define-command -override acorn_highlight %{ py %{
     global acorn_pipe_client
 
     acorn_pipe_client.send( ( 'highlight', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str() ) )
+    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
 } }
 
 define-command -override acorn_spell %{ py %{
@@ -591,14 +624,14 @@ define-command -override acorn_format %{ py %{
     global acorn_pipe_client
 
     acorn_pipe_client.send( ( 'format', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str() ) )
+    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
 } }
 
 define-command -hidden -override acorn_reload %{ py %{
     global acorn_pipe_client
 
     acorn_pipe_client.send( ( 'reload', val.client, opt.filetype, val.bufname ) )
-    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str() ) )
+    acorn_pipe_client.send( ( val.history_id, val.history.as_str(), val.uncommitted_modifications.as_str(), val.window_range.line, val.window_range.height ) )
 } }
 
 define-command -hidden -override acorn_dump %{ py %{
