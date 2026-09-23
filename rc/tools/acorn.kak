@@ -206,26 +206,30 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                 if not match:
                     continue
 
+                match_line_cache = int( match.group( 'line' ) )
+                match_column_cache = int( match.group( 'column' ) )
+                match_text_cache = match.group( 'text' )
+
                 # TODO if you paste when the selection is on the line end (e.g. an empty buffer)
                 # then the paste drops to a new/next line. There isn't a newline to count in the
                 # new case. May or may not be a problem.
                 line = 0
                 start_byte = 0
                 for i, c in enumerate( buffer ):
-                    if line == int( match.group( 'line' ) ):
+                    if line == match_line_cache:
                         start_byte = i
                         break
                     if c == '\n':
                         line += 1
-                start_byte += int( match.group( 'column' ) )
-                #print( 'mod - {}{}.{}; {}'.format( 
+                start_byte += match_column_cache
+                #print( 'mod - {}{}.{}; {}'.format(
                 #      match.group( 'action' )
                 #    , match.group( 'line' )
                 #    , match.group( 'column' )
                 #    , start_byte ) )
 
                 if ( match.group( 'action' ) == ( '-' if not reverse else '+' ) ):
-                    old_end_byte = start_byte + len( match.group( 'text' ) )
+                    old_end_byte = start_byte + len( match_text_cache )
 
                     old_end_line = buffer.count( '\n', 0, old_end_byte )
                     old_end_column = old_end_byte - buffer.rfind( '\n', 0, old_end_byte )
@@ -235,19 +239,19 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
                     new_end_byte = start_byte
 
-                    new_end_line = int( match.group( 'line' ) )
-                    new_end_column = int( match.group( 'column' ) )
+                    new_end_line = match_line_cache
+                    new_end_column = match_column_cache
 
                 else:
                     old_end_byte = start_byte
 
-                    old_end_line = int( match.group( 'line' ) )
-                    old_end_column = int( match.group( 'column' ) )
+                    old_end_line = match_line_cache
+                    old_end_column = match_column_cache
 
-                    buffer = buffer[ : start_byte ] + match.group( 'text' ) + buffer[ old_end_byte : ]
+                    buffer = buffer[ : start_byte ] + match_text_cache + buffer[ old_end_byte : ]
                     bufname_cache[ 'buffer' ] = buffer
 
-                    new_end_byte = start_byte + len( match.group( 'text' ) )
+                    new_end_byte = start_byte + len( match_text_cache )
 
                     new_end_line = buffer.count( '\n', 0, new_end_byte )
                     #print( 'action - {} {} b{}b'.format(
@@ -260,21 +264,21 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                 #      start_byte
                 #    , old_end_byte
                 #    , new_end_byte
-                #    , ( int( match.group( 'line' ) ), int( match.group( 'column' ) ) )
+                #    , ( match_line_cache, match_column_cache )
                 #    , ( old_end_line, old_end_column )
                 #    , ( new_end_line, new_end_column ) ) )
                 bufname_cache[ 'tree' ].edit(
                       start_byte=start_byte
                     , old_end_byte=old_end_byte
                     , new_end_byte=new_end_byte
-                    , start_point=( int( match.group( 'line' ) ), int( match.group( 'column' ) ) )
+                    , start_point=( match_line_cache, match_column_cache )
                     , old_end_point=( old_end_line, old_end_column )
                     , new_end_point=( new_end_line, new_end_column ) )
 
-                bufname_cache[ 'tree' ] = \
-                    filetype_cache[ 'parser' ].parse(
-                          bufname_cache[ 'buffer' ].encode()
-                        , bufname_cache[ 'tree' ] )
+            bufname_cache[ 'tree' ] = \
+                filetype_cache[ 'parser' ].parse(
+                      bufname_cache[ 'buffer' ].encode()
+                    , bufname_cache[ 'tree' ] )
 
             # In case 1.a we want to update the history id
             bufname_cache[ 'tree_history_id' ] = history_id
