@@ -208,7 +208,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
                 match_line_cache = int( match.group( 'line' ) )
                 match_column_cache = int( match.group( 'column' ) )
-                match_text_cache = match.group( 'text' )
+                match_text_cache = match.group( 'text' ).encode( 'utf-8' )
 
                 # TODO if you paste when the selection is on the line end (e.g. an empty buffer)
                 # then the paste drops to a new/next line. There isn't a newline to count in the
@@ -219,8 +219,12 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                     if line == match_line_cache:
                         start_byte = i
                         break
-                    if c == '\n':
+                    if c == 0x0a: # ord( '\n' )
                         line += 1
+                else:
+                    # shouldn't happen
+                    start_byte = len( buffer )
+
                 start_byte += match_column_cache
                 #print( 'mod - {}{}.{}; {}'.format(
                 #      match.group( 'action' )
@@ -231,8 +235,8 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
                 if ( match.group( 'action' ) == ( '-' if not reverse else '+' ) ):
                     old_end_byte = start_byte + len( match_text_cache )
 
-                    old_end_line = buffer.count( '\n', 0, old_end_byte )
-                    old_end_column = old_end_byte - buffer.rfind( '\n', 0, old_end_byte )
+                    old_end_line = buffer.count( b'\n', 0, old_end_byte )
+                    old_end_column = old_end_byte - buffer.rfind( b'\n', 0, old_end_byte ) - 1
 
                     buffer = buffer[ : start_byte ] + buffer[ old_end_byte : ]
                     bufname_cache[ 'buffer' ] = buffer
@@ -253,12 +257,12 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
                     new_end_byte = start_byte + len( match_text_cache )
 
-                    new_end_line = buffer.count( '\n', 0, new_end_byte )
+                    new_end_line = buffer.count( b'\n', 0, new_end_byte )
                     #print( 'action - {} {} b{}b'.format(
                     #      new_end_byte
                     #    , buffer.rfind( '\n', 0, new_end_byte )
                     #    , buffer[ max( 0, start_byte - 5 ) : min( len( buffer ),  new_end_byte + 5 ) ] ) )
-                    new_end_column = new_end_byte - buffer.rfind( '\n', 0, new_end_byte ) - 1
+                    new_end_column = new_end_byte - buffer.rfind( b'\n', 0, new_end_byte ) - 1
 
                 #print( 'mod - {} {} {}; {} {} {}'.format(
                 #      start_byte
@@ -277,7 +281,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
 
             bufname_cache[ 'tree' ] = \
                 filetype_cache[ 'parser' ].parse(
-                      bufname_cache[ 'buffer' ].encode()
+                      bufname_cache[ 'buffer' ]
                     , bufname_cache[ 'tree' ] )
 
             # In case 1.a we want to update the history id
@@ -301,7 +305,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
         keval_async( 'echo -debug Failed to create FIFO: {}'.format( e ), client=client )
     else:
         def read_fifo( filename, bufname_cache ):
-            with open( filename, 'r' ) as fifo:
+            with open( filename, 'rb' ) as fifo:
                 bufname_cache[ 'buffer' ] = fifo.read()
 
         reader = threading.Thread( target=read_fifo, args=( filename, bufname_cache ) )
@@ -315,7 +319,7 @@ def acorn_update_tree( client, filetype, bufname, history_id, history, uncommitt
     os.rmdir( tmpdir )
 
     bufname_cache[ 'tree' ] = \
-        filetype_cache[ 'parser' ].parse( bufname_cache[ 'buffer' ].encode() )
+        filetype_cache[ 'parser' ].parse( bufname_cache[ 'buffer' ] )
     bufname_cache[ 'tree_history_id' ] = history_id
 
 global acorn_highlight
